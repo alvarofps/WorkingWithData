@@ -1,0 +1,277 @@
+---
+title: "The relationship between vehicle mileage and profit by engine sales"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo=FALSE, include=FALSE}
+library("tidyverse")
+library("broom")
+library("tidyquant")
+library("janitor")
+library("GGally")
+library("ggplot2")
+library("Amelia")
+library('ggstatsplot')
+library('kableExtra')
+library('knitr') 
+require(lme4)
+require(lmerTest)
+require(tidyverse)
+require(readxl)
+require(magrittr)
+require(sjPlot)
+require(sjmisc)
+require(sjstats)
+require(arm)
+require('gridExtra')
+source('Constants.R')
+source('Functions.R')
+```
+## Introduction
+
+APS is a US based company that specializes in buying used vehicles, breaking them apart and selling its parts for its profit. For this investigation we were given access to its sales software database and focused on sales of the past 20 years. We aim to discover the vehicle manufacturer, model and mechanical parts that yielded the most profit. Then determine if there is a relationship between the mileage of vehicle and the profit that the sale of its parts produces. Finally, we aim to advice APS on the vehicle models that should be purchased based on its mileage to increase profit.
+
+## Objectives
+
+For this investigation we will determine APS's most profitable vehicle parts given the manufacturer. Subsequently, determine the most profitable vehicle model. Study how the mileage data is distributed in order to categorize an engine by its condition. After this we will fit a linear model to study the relationship between vehicle mileage and profit. Finally, this model will be analyzed and discussed for each of the vehicle models.
+
+## Data
+
+The dataset that will be analyzed comes from APS sales software. It has been
+processed to obtain the following columns. We used the Model, PartName and PartNumber as factors for grouping.
+```{r, echo=FALSE}
+oldStock = read.csv("APSOldParts.csv") 
+oldStockData = oldStockData = data.frame(oldStock)
+data = modifyDataframe(oldStockData) 
+filteredData = data %>%
+   dplyr::select(Manufacturer, Model, Year, Miles, PartNumber, PartName, Condition)%>% 
+  add_column(Profit = data$PriceSold - data$Cost)
+knitr::kable(head(filteredData), format="markdown", caption = "Overview of APS's Part dataset")
+
+```
+
+## Results
+
+To narrow the scope of the analysis we focused on the manufacturers and parts that bring the most revenue.
+```{r, fig.align = 'center', out.width = '85%', out.height = '75%', echo=FALSE, fig.cap="\\label{fig:manufacturerFigure}Most profitable vehicle manufacturer [2002-2022]"}
+ggplot(profitByManufacturer(filteredData), aes(x = Manufacturer, y = TotalProfit)) +
+  geom_col(fill = green) +
+  labs(title = "Profit by vehicle manufacturer (Million USD)", 
+       x = "Vehicle manufacturer", y = "Profit")+
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  geom_text(aes(label = paste(as.character(TotalProfit), "M")), vjust = -0.3, size = 2, color = "black")+
+  scale_y_continuous(breaks = seq(3, 21, by = 3))
+
+```
+
+```{r, fig.align = 'center', out.width = '85%', out.height = '75%', echo=FALSE, warning = FALSE,comment = FALSE, fig.cap="\\label{fig:partFigure}Most profitable parts [2002-2022]"}
+
+ggplot(profitByPart(filteredData), aes(x = PartName, y = TotalProfit)) +
+  geom_col(fill = green) +
+  labs(title = "Profit by part (Million USD)", x = "Part", y = "Profit")+
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         axis.text.x = element_text(size = 9, angle = 90),
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  geom_text(aes(label = paste(as.character(TotalProfit), "M")), vjust = -0.3 , size = 2, color = "black")+
+  scale_y_continuous(breaks = seq(3, 24, by = 3))
+
+```
+
+```{r, fig.align = 'center', out.width = '85%', out.height = '85%', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, fig.cap="\\label{fig:partByManufacturer} Most profitable part by manufacturer [2002-2022]"}
+
+ggplot(quantityOfProfitablePartsByManufacturer(filteredData), aes(x = Manufacturer, y = TotalProfit, fill = PartName)) +
+  geom_col(position = 'dodge2') +
+  scale_fill_manual(values = c(algaeGreen, green , blue, babyBlue, yellow)) +
+  labs(title = "Profit by part (Million USD)", x = "Vehicle manufacturer", y = "Profit")+
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         axis.text.x = element_text(size = 9),
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  geom_text(aes(label = paste(as.character(TotalProfit), "M")),
+            position = position_dodge(width = 0.9), vjust = -0.6 , size = 1.7, color = "black", fontface= 'bold')+
+  scale_y_continuous(breaks = seq(-0.1, 5.1, by = 0.5))
+
+```
+
+
+Due to business rules, mechanical parts were given priority in this analysis. This is corroborated by Figure \ref{fig:partFigure} since engines are the most profit-making parts. We also decided to focus on the top three manufacturers Figure \ref{fig:manufacturerFigure}. Thus limiting our scope to engines for Chevrolet, Dodge and Ford vehicles. In Figure \ref{fig:partByManufacturer} we can clearly see that engines bring the most revenue for each manufacturer.
+
+```{r, fig.align = 'center', out.width = '85%', out.height = '85%', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, fig.cap="\\label{fig:chevy} Most profitable Chevrolet models"}
+
+filter = getModels(filteredData)
+
+chevy = filter %>% subset(Manufacturer == 'CHEVROLET')
+
+ggplot(chevy, aes(x = Model, y = TotalProfit, fill = PartName))+
+  geom_col() +
+  scale_fill_manual(values = c(algaeGreen, green)) +
+  labs(title = "Profit for Chevrolet vehicles (Million USD)", x = "Model", y = "Profit")+
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         axis.text.x = element_text(size = 9, angle = 90,),
+         legend.position = "none",
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  geom_text(aes(label = paste(as.character(TotalProfit), "M")), size = 2, color = "black", fontface = 'bold', position = position_stack(vjust = 1.05))+
+  scale_y_continuous(breaks = seq(0.15, 1.2, by = 0.15))
+
+```
+```{r, fig.align = 'center', out.width = '85%', out.height = '85%', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, fig.cap="\\label{fig:ford} Most profitable Ford models"}
+ford = filter %>% subset(Manufacturer == 'FORD')
+
+ggplot(ford, aes(x = Model, y = TotalProfit, fill = PartName))+
+  geom_col() +
+  scale_fill_manual(values = c(algaeGreen, green)) +
+  labs(title = "Profit for Ford vehicles (Million USD)", x = "Model", y = "Profit")+
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         axis.text.x = element_text(size = 9, angle = 90),
+         legend.position = "none",
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  geom_text(aes(label = paste(as.character(TotalProfit), "M")), size = 2, color = "black", fontface = 'bold', position = position_stack(vjust = 1.05))+
+  scale_y_continuous(breaks = seq(0.15, 1.2, by = 0.15))
+
+```
+
+```{r, fig.align = 'center', out.width = '85%', out.height = '85%', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, fig.cap="\\label{fig:dodge} Most profitable Dodge models"}
+dodge = filter %>% subset(Manufacturer == 'DODGE')
+
+ggplot(dodge, aes(x = Model, y = TotalProfit, fill = PartName))+
+  geom_col() +
+  scale_fill_manual(values = c(algaeGreen, green)) +
+  labs(title = "Profit for Dodge vehicles (Million USD)", x = "Model", y = "Profit")+
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         axis.text.x = element_text(size = 9, angle = 90),
+         legend.position = "none",
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  geom_text(aes(label = paste(as.character(TotalProfit), "M")), size = 2, color = "black", fontface = 'bold', position = position_stack(vjust = 1.05))+
+  scale_y_continuous(breaks = seq(0.15, 1.2, by = 0.15))
+
+```
+In Figures 4 to 6 we determined the model of vehicle for each manufacturer that brought the most revenue.
+
+```{r, fig.align = 'center', out.width = '85%', out.height = '85%', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, results = FALSE, fig.cap="\\label{fig:miles} Vehicle mileage and part condition"}
+
+data = finalFilter(filteredData, filter)
+
+noOutliersBoxplot = ggplot(data, aes(x = Condition, y = Miles, fill = Condition)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c(green, yellow , red)) +
+  labs(x="Part condition",y="Vehicle mileage") +
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         legend.position = "none",
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  coord_flip()
+
+# Violin plot without Outliers
+noOutliersViolinPlot = ggplot(data, aes(x = Condition, y = Miles, fill = Condition))+
+  geom_violin() +
+  scale_fill_manual(values = c(green, yellow , red)) +
+  labs(x="Part condition",y="Vehicle mileage") +
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  coord_flip()
+
+grid.arrange(noOutliersBoxplot,noOutliersViolinPlot, ncol=2)
+```
+
+```{r, echo=FALSE}
+knitr::kable(data %>% group_by(Condition) %>% summarise("Miles" = signif(mean(Miles),3)),
+             format="markdown", caption = "Condition and average mileage")
+
+```
+One of the objectives of our analysis was to discover the relationship between the engine's condition and the mileage. We decided not to apply multiple imputation on the missing values on the Miles column and just omit the rows with NAs. This is because the absence of data was an effect of input error by the software users. In Figure \ref{fig:miles} and Table 2 we can observe that for condition C, the data is displaced towards higher mileage. Even though condition A and B look similar, the mean suggests that condition A parts have lower mileage on average. But it is clear that regardless of the mileage of the vehicle and egine could be categorized to any of these conditions
+
+We begin by plotting a simple linear model to determine if there is a relationship between the vehicle mileage and profit. Figure \ref{fig:lModel} indicates a negative slope exists and it varies depending the model of vehicle. For instance, the FORD F350SD PICKUP model indicates that engines from vehicles with low mileage sell at a higher price. 
+```{r , fig.align = 'center', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, results = FALSE, fig.cap="\\label{fig:lModel} Initial analysis"}
+justWhatINeed = data %>% dplyr::select(-c(PartName, PartNumber))
+hModel = lm(Profit ~ Miles + Model + Miles*Model, data = justWhatINeed)
+hierModel = lmer(Profit ~ Miles + (1|Model) ,data = justWhatINeed)
+
+ggplot(data = justWhatINeed, aes(x = Miles,y = Profit, col = Model)) +
+  geom_point() +
+  stat_smooth(method = "lm", aes(col = Model), alpha=0.15) +
+  labs(x="Part condition",y="Vehicle mileage") +
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         legend.position = "bottom",
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  ggtitle("Relationship between vehicle mileage and profit")
+
+```
+
+With these observations we fitted a random intercepts model controlled on vehicle model, m1. This yielded an Intercept of 3044.4 and a slope of -6.7 and the following residuals. Figure \ref{fig:residuals} shows that variance of the residuals are not the same for all the fitted values. This is specially true for the DURANGO model.
+
+```{r , out.width = '85%', out.height = '85%', fig.align = 'center', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, results = FALSE, fig.cap="\\label{fig:residuals} Residual values for m1"}
+
+d = data.frame(Residuals=resid(hierModel),
+                          Model=justWhatINeed$Model,
+                          Fitted= fitted(hierModel))
+               
+ggplot(data=d, aes(x=Fitted,y=Residuals,col=Model)) +
+  geom_point() +
+  facet_wrap(~Model) +
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  ggtitle("Lowest level residuals facetting by model")
+
+justWhatINeed$PredictedProfit = predict(hierModel)
+
+
+```
+```{r , fig.align = 'center', out.width = '85%', out.height = '85%', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, results = FALSE, fig.cap="\\label{fig:randomEffects} Random effects for m1"}
+
+plot_model(hierModel, type = "re")
+```
+Figure \ref{fig:randomEffects} shows there is considerable volatility within the models. Meaning the model is inexact for predicting random effects for some vehicle models. The model has good performance for the SILVERADO 2500 PICKUP and FORD F150 PICKUP. Finally, in Figure \ref{fig:predictions} we have the predicted values for the Profit based on m1.
+```{r ,  out.width = '85%', out.height = '85%', fig.align = 'center', echo = FALSE, warning = FALSE, comment = FALSE, message = FALSE, results = FALSE, fig.cap="\\label{fig:predictions} Predicted values for m1"}
+ggplot(aes(x = Miles,y = PredictedProfit, color = Model), data = justWhatINeed) +
+  geom_line(size=.3) +
+  geom_point(aes(y = PredictedProfit))+ 
+  theme( axis.title.x = element_text(size = 12, face = "italic"),
+         axis.title.y = element_text(size = 12, face = "italic"),
+         plot.title  = element_text(size = 15, face = "italic"),
+         panel.background = element_rect(fill = 'white', colour = 'black', color = 'black', linetype = 'solid'))+
+  ggtitle("Predicted values")
+```
+
+## Limitations
+
+This study was limited regarding the quality of the data, specially the mileage information. Because this data was extracted from the APS software, users would often enter random numbers if they did not have mileage information. Thus leaving us with no option other than omit those rows. We opted to no use multiple imputations on this dataset since the generated values were not close to reality. This limiting the amount of observations.
+
+For future studies in this area it would be recommended to obligate the user to enter an estimated value of the vehicle. And also store more relevant quantifiable variables regarding the state of the vehicle.
+
+It would be recommended to categorize the vehicle not only by models but also, type. Such as sedans, trucks, vans, etc. In order to further specialize the study.
+
+## Conclusions
+
+For this investigation the APS sales software database was used as dataset, and was refined to limit the scope of the study.
+
+Regarding the condition of an engine, after analyzing how the mileage was distributed we came to the conclusion that the mileage alone is not enough to categorize an engine to a condition. This can be explained that regardless the mileage of a vehicle if its engine has been maintained properly it will be in good condition and vice versa. 
+
+Another goal was to find out the most profitable vehicle model by its engine sales. This resulted in the FORD F150 PICKUP, Figure 10 shows m1 was able to fit the profit relatively accurate compared to other vehicle models. This is also corroborated by it residual values in Figure 9.
+
+In conclusion, FORD engines have brought the most revenue during the past 20 years. The hierarchical model m1 yielded that mileage on a vehicle is a strong predictor for the profit on the sale of its engine. Based on this study we would recommend APS to purchase FORD PICKUP vehicles with a relative low mileage in order to increase their overall profit.
+
+## Appendix
+
+The relevant code can be found at: https://github.com/alvarofps/WorkingWithData
